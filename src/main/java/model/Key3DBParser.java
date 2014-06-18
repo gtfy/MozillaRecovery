@@ -2,6 +2,7 @@ package model;
 
 import java.io.File;
 import java.io.IOException;
+import java.security.DigestException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -17,6 +18,7 @@ import javax.crypto.Mac;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
+import javax.crypto.ShortBufferException;
 import javax.crypto.spec.DESedeKeySpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -52,18 +54,21 @@ public class Key3DBParser {
 	private byte[] entrySalt;
 
 
-	// Some vars we are going to reuse in the new decryptPasswordCheck functino
+	// Some vars we are going to reuse in the new decryptPasswordCheck function
 	private final MessageDigest md_sha1;
 	private final Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
 	private final Cipher des_cipher;
 	private final SecretKeyFactory des_secKeyFactory;
 	private byte[] pes_es;
 	private byte[] pes;
+	private final byte hp[] = new byte[20];
+	private final byte chp[] = new byte[20];
+	private final byte k1[] = new byte[20];
+	private final byte tk[] = new byte[20];
+	private final byte k2[] = new byte[20];
 	// We (re)use this buffer for key concatenating and such
-	// TODO: 1024 should be enough, but CHECK IT !! 1!!
+	// TODO: 2048 should be enough, but CHECK IT !! 1!!
 	private final byte[] buff_tmp = new byte[2048]; 
-
-	
 	
 	
 	public Key3DBParser(String key3Path) throws IOException, NoSuchAlgorithmException, NoSuchProviderException, NoSuchPaddingException {
@@ -165,7 +170,7 @@ public class Key3DBParser {
 	}
 	
 	
-	public boolean isMasterpass(byte[] pass) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException{
+	public boolean isMasterpass(byte[] pass) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException, DigestException, ShortBufferException, IllegalStateException{
 		return Arrays.equals(decryptPasswordCheck(pass, encPasswordCheck), PASSWORD_CHECK_BYTES);
 	}
 	
@@ -185,29 +190,42 @@ public class Key3DBParser {
 	 *  - We should be able to reuse almost every byte array and read into them instead of recreating them again and again.
 	 *  - If the input buffer for hp is a new buffer, we could save the gs move to the buffer and do it once after the gs is found 
 	 */
-	public byte[] decryptPasswordCheck(byte[] password, byte[] cryptText) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException{
+	public byte[] decryptPasswordCheck(byte[] password, byte[] cryptText) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException, DigestException, ShortBufferException, IllegalStateException{
 		// TODO: 
 		// HP = SHA1(global-salt||password)
 		System.arraycopy(globalSalt, 0, buff_tmp, 0, globalSalt.length);
 		System.arraycopy(password, 0, buff_tmp, globalSalt.length, password.length);
 		md_sha1.update(buff_tmp, 0, globalSalt.length + password.length);
-		byte[] hp = md_sha1.digest();
+		//byte[] hp = md_sha1.digest();
+		md_sha1.digest(hp, 0, 20);
+		
 		// CHP = SHA1(HP||ES)
 		System.arraycopy(hp, 0, buff_tmp, 0, hp.length);
 		System.arraycopy(entrySalt, 0, buff_tmp, hp.length, entrySalt.length);
 		md_sha1.update(buff_tmp, 0, hp.length + entrySalt.length);
-		byte[] chp = md_sha1.digest();	
+		//byte[] chp = md_sha1.digest();
+		md_sha1.digest(chp, 0, 20);
+		
 		// k1 = CHMAC(PES||ES)
 		SecretKeySpec signingKey = new SecretKeySpec(chp, HMAC_SHA1_ALGORITHM);
 		mac.init(signingKey);
-		byte[] k1 = mac.doFinal(pes_es);	
+		//System.out.println("mac length " + mac.getMacLength());
+		//byte[] k1 = mac.doFinal(pes_es);
+		mac.update(pes_es);
+		mac.doFinal(k1, 0);
+		
 		// tk = CHMAC(PES)
-		byte[] tk = mac.doFinal(pes);
+		//byte[] tk = mac.doFinal(pes);
+		mac.update(pes);
+		mac.doFinal(tk, 0);
+		
 		// k2 = CHMAC(tk||ES)
 		System.arraycopy(tk, 0, buff_tmp, 0, tk.length);
 		System.arraycopy(entrySalt, 0, buff_tmp, tk.length, entrySalt.length);
 		mac.update(buff_tmp, 0, tk.length + entrySalt.length);
-		byte[] k2 = mac.doFinal();		
+		//byte[] k2 = mac.doFinal();		
+		mac.doFinal(k2, 0);
+		
 		// k = k1||k2
 		int klen = k1.length + k2.length;
 		System.arraycopy(k1, 0, buff_tmp, 0, k1.length);
@@ -215,6 +233,7 @@ public class Key3DBParser {
 		// That class only gets the first 24 bytes, so we don't need to care about the buff_tmp length
 		DESedeKeySpec keySpec = new DESedeKeySpec(buff_tmp);
 		SecretKey key = des_secKeyFactory.generateSecret(keySpec);
+		// TODO use pre aloced 8 byte buffer here ?
 		byte[] desIV = Arrays.copyOfRange(buff_tmp, klen - 8, klen);
 		IvParameterSpec iv = new IvParameterSpec(desIV);
 		des_cipher.init(Cipher.DECRYPT_MODE, key, iv);
@@ -224,8 +243,6 @@ public class Key3DBParser {
 			return null;
 		}
 	}	
-	
-
 
 	private static Integer indexOf(byte[] subarray, byte[] array) {
 

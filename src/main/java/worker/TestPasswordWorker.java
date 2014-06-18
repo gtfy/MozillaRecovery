@@ -1,6 +1,7 @@
 package worker;
 
 import java.io.IOException;
+import java.security.DigestException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -16,6 +17,7 @@ import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.Mac;
 import javax.crypto.NoSuchPaddingException;
+import javax.crypto.ShortBufferException;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.log4j.Logger;
@@ -58,17 +60,20 @@ public class TestPasswordWorker extends Thread{
 		int i;
 		
 		// test if the pass is empty
-		try {
-			if(parser.isMasterpass("".getBytes())){
-				progressDisplay.workerDone(this);
-				progressDisplay.setResult("");
-				return;
+
+			try {
+				if(parser.isMasterpass("".getBytes())){
+					progressDisplay.workerDone(this);
+					progressDisplay.setResult("");
+					return;
+				}
+			} catch (InvalidKeyException | InvalidKeySpecException
+					| InvalidAlgorithmParameterException
+					| IllegalBlockSizeException | BadPaddingException
+					| DigestException | ShortBufferException | IllegalStateException e1) {
+				e1.printStackTrace();
 			}
-		} catch (InvalidKeyException | InvalidKeySpecException
-				| InvalidAlgorithmParameterException
-				| IllegalBlockSizeException | BadPaddingException e1) {
-			// TODO handle this or move the "no password check" ?
-		}
+
 		
 		while(! interrupted()){
 			if(isShutdown && jobQueue.isEmpty()){
@@ -97,7 +102,7 @@ public class TestPasswordWorker extends Thread{
 					}
 				} catch (InvalidKeyException | InvalidKeySpecException
 						| InvalidAlgorithmParameterException
-						| IllegalBlockSizeException | BadPaddingException e) {
+						| IllegalBlockSizeException | BadPaddingException | DigestException | ShortBufferException | IllegalStateException e) {
 					// TODO All of these should be critical error, i guess ?
 					// TODO think about it. 
 					e.printStackTrace();

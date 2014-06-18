@@ -43,16 +43,18 @@ public class WordListWorker extends Thread {
 		int batchSize = 100000;
 		int maxWordLength = 512; // the internal buffer is 2048, so why not ?
 		int i = 0;
+		byte byteWord[];
 		try {
 			while(! interrupted()){
 				for (i = 0; i < batchSize && (data = reader.readLine()) != null; ++i) {
-					if(data.length() > maxWordLength){
-						System.out.println("skip");
+					//System.out.println(data);
+					byteWord = utf8_cs.encode(data).array();
+					if(byteWord.length > maxWordLength){
+						//System.out.println("skip");
 						i--;
 						continue;
 					}
-					//System.out.println(data);
-					queue.put( utf8_cs.encode(data).array() );	
+					queue.put( byteWord );	
 				}
 				if(data == null)break;
 			}

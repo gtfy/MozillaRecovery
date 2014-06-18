@@ -2,20 +2,37 @@ package model;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
+import java.security.spec.InvalidKeySpecException;
 import java.util.Arrays;
 
 import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.Mac;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.DESedeKeySpec;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.log4j.Logger;
+
 
 public class Key3DBParser {
 
 	private static final byte[] VERSION_STR = "Version".getBytes();
 	private static final byte[] GLOBAL_SALT_STR = "global-salt".getBytes();
-	private static final byte[] PASSWORD_CHECK_STR = "password-check"
-			.getBytes();
+	
+	
+	private static final String PASSWORD_CHECK_STR = "password-check";
+	private static final byte[] PASSWORD_CHECK_BYTES = PASSWORD_CHECK_STR.getBytes();
+	
 	private final static Logger logger = Logger.getLogger(Key3DBParser.class);
 	public static String NEWLINE = System.getProperty("line.separator");
 
@@ -27,104 +44,65 @@ public class Key3DBParser {
 	private static final int ENC_PASSWORD_CHECK_LENGTH = 16;
 	private static final int GLOBAL_KEY_LENGTH = 20;
 
+	
 	private final byte[] key3Bytes;
 	private byte[] globalSalt;
 	private Integer globalSaltIndex;
 	private byte[] encPasswordCheck;
 	private byte[] entrySalt;
 
-	public Key3DBParser(String key3Path) throws IOException {
+
+	// Some vars we are going to reuse in the new decryptPasswordCheck functino
+	private final MessageDigest md_sha1;
+	private final Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
+	private final Cipher des_cipher;
+	private final SecretKeyFactory des_secKeyFactory;
+	private byte[] pes_es;
+	private byte[] pes;
+	// We (re)use this buffer for key concatenating and such
+	// TODO: 1024 should be enough, but CHECK IT !! 1!!
+	private final byte[] buff_tmp = new byte[2048]; 
+
+	
+	
+	
+	public Key3DBParser(String key3Path) throws IOException, NoSuchAlgorithmException, NoSuchProviderException, NoSuchPaddingException {
 		key3Bytes = FileIO.getBytesFromFile(new File(key3Path));
+		
+		md_sha1 = MessageDigest.getInstance(SHA1_ALGORITHM);
+		des_cipher = Cipher.getInstance("DESede/CBC/PKCS5Padding", "SunJCE");
+		des_secKeyFactory =  SecretKeyFactory.getInstance("DESede");
+		
 	}
-
-	public String parse() {
+	
+	public String parse() throws Key3DBParseException {
 		StringBuilder b = new StringBuilder();
-		b.append("Version: " + parseVersion() + NEWLINE);
-		b.append("Global salt: " + parseGlobalSalt() + NEWLINE);
-		b.append("Entry salt: " + parseEntrySalt() + NEWLINE);
-		b.append("Encrypted PasswordCheck: " + parseEncryptedPasswordCheck()
-				+ NEWLINE);
+		String tmp;
+		if( (tmp = parseVersion()) == null )
+			throw new Key3DBParseException("Can't parse version.");			
+		b.append("Version: " + tmp + NEWLINE);
+		if( (tmp = parseGlobalSalt()) == null )
+			throw new Key3DBParseException("Can't parse global salt.");
+		b.append("Global salt: " + tmp + NEWLINE);
+		if( (tmp = parseEntrySalt()) == null )
+			throw new Key3DBParseException("Can't parse entry salt.");
+		b.append("Entry salt: " + tmp + NEWLINE);
+		if( (tmp = parseEncryptedPasswordCheck()) == null )
+			throw new Key3DBParseException("Can't parse global salt.");
+		b.append("Encrypted PasswordCheck: " + tmp + NEWLINE);
 		return b.toString();
-	}
-
-	public boolean isPassword(String masterPassword) {
-		String result = performPasswordCheck(masterPassword);
-		if (result == null) {
-			return false;
-		}
-		return result.equals(new String(PASSWORD_CHECK_STR));
-	}
-
-	private String performPasswordCheck(String masterPassword) {
-		if (entrySalt != null && encPasswordCheck != null) {
-			try {
-				return decryptPasswordCheck(masterPassword.getBytes("utf-8"),
-						entrySalt, globalSalt, encPasswordCheck);
-			} catch (UnsupportedEncodingException e) {
-				e.printStackTrace();
-				logger.error(e.getMessage());
-			}
-		}
-		return "entry-salt or password-check not found";
-	}
-
+	}	
+	
 	private String parseVersion() {
 		Integer index = indexOf(VERSION_STR, key3Bytes);
 		if (index != null) {
 			return String.valueOf(key3Bytes[index - 1]);
 		}
-		return "No Version found";
-	}
-
-	/**
-	 * This is tested and works well.
-	 * 
-	 * @param password
-	 * @param es
-	 * @param gs
-	 * @param text
-	 * @return result of decryption
-	 */
-	private static String decryptPasswordCheck(byte[] password, byte[] es,
-			byte[] gs, byte[] text) {
-		try {
-			// HP = SHA1(global-salt||password)
-			byte[] hp = SHA.sha1(appendArray(gs, password));
-			logger.debug("HP: " + convertByteToHex(hp));
-			byte[] pes = Arrays.copyOf(es, 20);
-			logger.debug("PES: " + convertByteToHex(pes));
-			// CHP = SHA1(HP||ES)
-			byte[] chp = SHA.sha1(appendArray(hp, es));
-			logger.debug("CHP: " + convertByteToHex(chp));
-			// k1 = CHMAC(PES||ES)
-			byte[] k1 = SHA.sha1Hmac(appendArray(pes, es), chp);
-			logger.debug("k1: " + convertByteToHex(k1));
-			// tk = CHMAC(PES)
-			byte[] tk = SHA.sha1Hmac(pes, chp);
-			logger.debug("tk: " + convertByteToHex(tk));
-			// k2 = CHMAC(tk||ES)
-			byte[] k2 = SHA.sha1Hmac(appendArray(tk, es), chp);
-			logger.debug("k2: " + convertByteToHex(k2));
-			// k = k1||k2
-			byte[] k = appendArray(k1, k2);
-			byte[] desKey = Arrays.copyOf(k, 24);
-			logger.debug("key: " + convertByteToHex(desKey));
-			byte[] desIV = Arrays.copyOfRange(k, k.length - 8, k.length);
-			logger.debug("iv: " + convertByteToHex(desIV) + "\n");
-
-			return new TripleDES(desKey, desIV).decrypt(text);
-
-		} catch (NoSuchAlgorithmException e) {
-			logger.fatal(e.getMessage());
-			e.printStackTrace();
-		} catch (BadPaddingException e) {
-			logger.debug(e.getMessage() + ". Probably wrong key.");
-		}
 		return null;
 	}
 
 	private String parseEncryptedPasswordCheck() {
-		Integer index = indexOf(PASSWORD_CHECK_STR, key3Bytes);
+		Integer index = indexOf(PASSWORD_CHECK_BYTES, key3Bytes);
 		if (index != null) {
 			int from = index - ENC_PASSWORD_CHECK_LENGTH;
 			int to = index;
@@ -142,6 +120,14 @@ public class Key3DBParser {
 			int from = globalSaltIndex + GLOBAL_SALT_STR.length + 3;
 			int to = from + saltLength;
 			entrySalt = Arrays.copyOfRange(key3Bytes, from, to);
+			
+			// This part isn't going to be changed, so we do it once
+			pes = new byte[20];
+			System.arraycopy(entrySalt, 0, pes, 0, 20);
+			pes_es = new byte[entrySalt.length + 20];			
+			System.arraycopy(entrySalt, 0, pes_es, 0, 20);
+			System.arraycopy(entrySalt, 0, pes_es, 20, entrySalt.length);
+			
 			return convertByteToHex(entrySalt);
 		}
 		return null;
@@ -155,8 +141,91 @@ public class Key3DBParser {
 			globalSalt = Arrays.copyOfRange(key3Bytes, from, to);
 			return convertByteToHex(globalSalt);
 		}
-		return "No global-salt found";
+		return null;
 	}
+	
+	
+	private static final String HMAC_SHA1_ALGORITHM = "HmacSHA1";
+	private static final String SHA1_ALGORITHM = "SHA-1";
+	public static byte[] sha1Hmac(byte[] data, byte[] key) {
+		try {
+			SecretKeySpec signingKey = new SecretKeySpec(key,
+					HMAC_SHA1_ALGORITHM);
+			
+			Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
+			
+			mac.init(signingKey);
+			return mac.doFinal(data);
+		} catch (NoSuchAlgorithmException | InvalidKeyException e) {
+			e.printStackTrace();
+			logger.fatal(e.getMessage());
+		} 
+		return null;
+
+	}
+	
+	
+	public boolean isMasterpass(byte[] pass) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException{
+		return Arrays.equals(decryptPasswordCheck(pass, encPasswordCheck), PASSWORD_CHECK_BYTES);
+	}
+	
+	
+	/**
+	 * Faster decryptPasswordCheck implementation, due to less object creations and buffer allocations.
+	 * 
+	 * @param password
+	 * @param cryptText
+	 * @return decrypted text as byte[] or null if there was some padding error
+	 * @throws InvalidKeyException
+	 * @throws InvalidKeySpecException
+	 * @throws InvalidAlgorithmParameterException
+	 * @throws IllegalBlockSizeException
+	 * 
+	 * TODO:
+	 *  - We should be able to reuse almost every byte array and read into them instead of recreating them again and again.
+	 *  - If the input buffer for hp is a new buffer, we could save the gs move to the buffer and do it once after the gs is found 
+	 */
+	public byte[] decryptPasswordCheck(byte[] password, byte[] cryptText) throws InvalidKeyException, InvalidKeySpecException, InvalidAlgorithmParameterException, IllegalBlockSizeException{
+		// TODO: 
+		// HP = SHA1(global-salt||password)
+		System.arraycopy(globalSalt, 0, buff_tmp, 0, globalSalt.length);
+		System.arraycopy(password, 0, buff_tmp, globalSalt.length, password.length);
+		md_sha1.update(buff_tmp, 0, globalSalt.length + password.length);
+		byte[] hp = md_sha1.digest();
+		// CHP = SHA1(HP||ES)
+		System.arraycopy(hp, 0, buff_tmp, 0, hp.length);
+		System.arraycopy(entrySalt, 0, buff_tmp, hp.length, entrySalt.length);
+		md_sha1.update(buff_tmp, 0, hp.length + entrySalt.length);
+		byte[] chp = md_sha1.digest();	
+		// k1 = CHMAC(PES||ES)
+		SecretKeySpec signingKey = new SecretKeySpec(chp, HMAC_SHA1_ALGORITHM);
+		mac.init(signingKey);
+		byte[] k1 = mac.doFinal(pes_es);	
+		// tk = CHMAC(PES)
+		byte[] tk = mac.doFinal(pes);
+		// k2 = CHMAC(tk||ES)
+		System.arraycopy(tk, 0, buff_tmp, 0, tk.length);
+		System.arraycopy(entrySalt, 0, buff_tmp, tk.length, entrySalt.length);
+		mac.update(buff_tmp, 0, tk.length + entrySalt.length);
+		byte[] k2 = mac.doFinal();		
+		// k = k1||k2
+		int klen = k1.length + k2.length;
+		System.arraycopy(k1, 0, buff_tmp, 0, k1.length);
+		System.arraycopy(k2, 0, buff_tmp, k1.length, k2.length);
+		// That class only gets the first 24 bytes, so we don't need to care about the buff_tmp length
+		DESedeKeySpec keySpec = new DESedeKeySpec(buff_tmp);
+		SecretKey key = des_secKeyFactory.generateSecret(keySpec);
+		byte[] desIV = Arrays.copyOfRange(buff_tmp, klen - 8, klen);
+		IvParameterSpec iv = new IvParameterSpec(desIV);
+		des_cipher.init(Cipher.DECRYPT_MODE, key, iv);
+		try {
+			return des_cipher.doFinal(cryptText);
+		} catch (BadPaddingException e) {
+			return null;
+		}
+	}	
+	
+
 
 	private static Integer indexOf(byte[] subarray, byte[] array) {
 
@@ -170,7 +239,7 @@ public class Key3DBParser {
 				boolean found = true;
 				// test all other indices of subarray
 				for (int j = 1; j < subarray.length; j++) {
-					if ((i + j) >= array.length || array[i + j] != subarray[j]) {
+					if (!(array[i + j] == subarray[j])) {
 						found = false;
 						break;
 					}
@@ -201,17 +270,6 @@ public class Key3DBParser {
 		return buffer.toString();
 	}
 
-	private static byte[] appendArray(byte[] arr1, byte[] arr2) {
-		byte[] ret = new byte[arr1.length + arr2.length];
-		for (int i = 0; i < arr1.length; i++) {
-			ret[i] = arr1[i];
-		}
-		for (int i = 0; i < arr2.length; i++) {
-			ret[i + arr1.length] = arr2[i];
-		}
-		return ret;
-	}
-
 	/**
 	 * Helping method to convert a hex String to a byte array
 	 * 
@@ -228,19 +286,19 @@ public class Key3DBParser {
 		return result;
 	}
 
-	@SuppressWarnings("unused")
-	private static boolean testDecryption() {
-		byte[] password = Key3DBParser.convertHextoByte("70617373776f7264");
-		byte[] entrySalt = Key3DBParser
-				.convertHextoByte("1596bb8112652a43e7bdfb2fdc8799e5");
-		byte[] globalSalt = Key3DBParser
-				.convertHextoByte("5aac8e0439e8d69ea0fe1bc013cd5af8");
-		byte[] data = Key3DBParser
-				.convertHextoByte("c0846848fe6e3524fdd4a6e3e783cf38");
-		String result = decryptPasswordCheck(password, entrySalt, globalSalt,
-				data);
-		System.out.println("result string: " + result);
-		return result.equals(new String(PASSWORD_CHECK_STR));
-	}
+//	@SuppressWarnings("unused")
+//	private static boolean testDecryption() {
+//		byte[] password = Key3DBParser.convertHextoByte("70617373776f7264");
+//		byte[] entrySalt = Key3DBParser
+//				.convertHextoByte("1596bb8112652a43e7bdfb2fdc8799e5");
+//		byte[] globalSalt = Key3DBParser
+//				.convertHextoByte("5aac8e0439e8d69ea0fe1bc013cd5af8");
+//		byte[] data = Key3DBParser
+//				.convertHextoByte("c0846848fe6e3524fdd4a6e3e783cf38");
+//		String result = decryptPasswordCheck(password, entrySalt, globalSalt,
+//				data);
+//		System.out.println("result string: " + result);
+//		return result.equals(new String(PASSWORD_CHECK_BYTES));
+//	}
 
 }

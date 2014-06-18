@@ -64,7 +64,7 @@ public class Starter {
 		UIManager.put("nimbusFocus", new Color(170, 0, 0));
 		UIManager.put("nimbusSelection", new Color(170, 0, 0));
 
-		UIManager.put("textBackground", Color.black);
+		UIManager.put("textBackground", Color.gray);
 		UIManager.put("nimbusLightBackground", Color.black);
 
 		for (LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {

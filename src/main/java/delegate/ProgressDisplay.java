@@ -1,6 +1,6 @@
 package delegate;
 
-import worker.TestPasswordWorker;
+import worker.PasswordWorkerInterface;
 
 public interface ProgressDisplay {
 	public void addProgress(int size, String currentTry);
@@ -8,6 +8,6 @@ public interface ProgressDisplay {
 	public void setResult(String password);
 
 	
-	public void workerDone(TestPasswordWorker name);
+	public void workerDone(PasswordWorkerInterface name);
 	public void producerDone(Thread name);
 }

@@ -21,15 +21,12 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.util.ArrayList;
-import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 
 import javax.crypto.NoSuchPaddingException;
 import javax.imageio.ImageIO;
-import javax.swing.AbstractButton;
 import javax.swing.ButtonGroup;
-import javax.swing.ButtonModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -40,17 +37,15 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.border.EmptyBorder;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
 
 import model.Application;
 import model.DefaultKey3Location;
 import model.Key3DBParseException;
 
 import org.apache.log4j.Logger;
-import org.apache.log4j.chainsaw.Main;
 
 import worker.BruteForceWorker;
+import worker.PasswordWorkerInterface;
 import worker.ProcessWorker;
 import worker.TestPasswordWorker;
 import worker.WordListWorker;
@@ -91,9 +86,9 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 	private final JCheckBox doProccess = new JCheckBox("proccess");
 
 	// stuff 
-	private final List<TestPasswordWorker> workers = new ArrayList<TestPasswordWorker>();
+	private final List<PasswordWorkerInterface> workers = new ArrayList<PasswordWorkerInterface>();
 	private final List<Thread> producers = new ArrayList<Thread>();
-	private int maxWordQueue = 1000000;
+	private int maxWordQueue = Runtime.getRuntime().availableProcessors() * QUEUE_WORDS_PER_WORKER;
 	private final ArrayBlockingQueue<byte[]> wordQueue = new ArrayBlockingQueue<byte[]>(maxWordQueue);
 	private long startCrackTime;
 	private long tries;
@@ -148,7 +143,7 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 	}
 	
 	private void shutdownWorkerThreads(boolean force){
-		for (TestPasswordWorker thread : workers) {
+		for (PasswordWorkerInterface thread : workers) {
 			thread.shutdownWhenEmpty();
 			if(force) thread.interrupt();
 		}
@@ -175,7 +170,7 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 			try {producer.join();}
 			catch (InterruptedException e) {}
 		}
-		for (Thread worker : workers) {
+		for (PasswordWorkerInterface worker : workers) {
 			try {worker.join();}
 			catch (InterruptedException e) {}
 		}		
@@ -193,8 +188,8 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 		
 		try {
 			for (int i = 0; i < threadCount; i++) {
-				TestPasswordWorker worker;
-					worker = new TestPasswordWorker(key3Path.getText(), wordQueue, this);
+				PasswordWorkerInterface worker;
+				worker = new TestPasswordWorker(key3Path.getText(), wordQueue, this);
 				workers.add(worker);
 				worker.start();
 			}
@@ -212,16 +207,15 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 			return;
 		}
 		
-		maxWordQueue = workers.size() * QUEUE_WORDS_PER_WORKER;
-		tries = 0;
-		startCrackTime = System.currentTimeMillis();
 		
 		String cmd = btnGroup.getSelection().getActionCommand();
 		Thread producer;
+		
+		tries = 0;
+		startCrackTime = System.currentTimeMillis();
 		switch(cmd){
 		
 			case "bruteforce":
-				System.out.println("do bruteforce");
 				if(parameter.getText().length() < 1){
 					output.setText("You need to specify which chars to use.");
 					return;
@@ -542,7 +536,7 @@ public class MainFrame extends JFrame implements ProgressDisplay, ItemListener {
 	}
 
 	@Override
-	public synchronized void workerDone(TestPasswordWorker worker) {
+	public synchronized void workerDone(PasswordWorkerInterface worker) {
 		logger.info("Worker " + worker.getName() + " done.");
 		workers.remove(worker);
 		if(workers.size() == 0){
